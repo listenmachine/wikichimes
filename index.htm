@@ -9,9 +9,10 @@
     body{
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       margin: 24px;
-      max-width: 820px;
+      max-width: 860px;
     }
     h1{ margin: 0 0 14px; font-size: 22px; }
+
     .top{
       display: flex;
       gap: 12px;
@@ -38,7 +39,7 @@
       font-size: 14px;
       line-height: 1.05;
       padding: 14px 16px;
-      border: 1px solid #ddd;
+      border: 1px solid rgba(127,127,127,0.35);
       border-radius: 14px;
       background: rgba(127,127,127,0.06);
       overflow: hidden;
@@ -51,7 +52,7 @@
       list-style: none;
       padding: 0;
       margin: 0;
-      border: 1px solid #ddd;
+      border: 1px solid rgba(127,127,127,0.35);
       border-radius: 14px;
       overflow: hidden;
     }
@@ -65,9 +66,7 @@
       background: rgba(127,127,127,0.03);
     }
     li:first-child{ border-top: 0; }
-    a{
-      text-decoration: none;
-    }
+    a{ text-decoration: none; }
     a:hover{ text-decoration: underline; }
     .meta{
       font-size: 12px;
@@ -99,8 +98,8 @@
   // Wikimedia recent changes firehose (SSE)
   const STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange";
 
-  // Keep this conservative so it’s listenable.
-  // You can change to "" to allow all wikis.
+  // Default: keep it listenable.
+  // Change to "" if you want all wikis (it will be near-constant).
   const DEFAULT_DOMAIN = "en.wikipedia.org";
 
   const toggleBtn = document.getElementById("toggle");
@@ -111,22 +110,24 @@
   let es = null;
   let running = false;
 
-  // --- soft audio limiter (keeps overlap, prevents total chaos) ---
-  const recentChimes = []; // timestamps (ms) of played chimes
-  const MAX_CHIMES_PER_SEC = 12;
+  // Soft density limiter (still allows overlap, but avoids a wall of sound)
+  const recentChimes = []; // timestamps (ms)
+  const MAX_CHIMES_PER_SEC = 10;
 
   // --- Audio ---
   let audio = null;
 
-  function makeImpulseResponse(ctx, seconds = 2.2, decay = 3.5) {
+  function makeImpulseResponse(ctx, seconds = 5.0, decay = 4.6) {
     const rate = ctx.sampleRate;
     const length = Math.floor(rate * seconds);
     const impulse = ctx.createBuffer(2, length, rate);
+
     for (let ch = 0; ch < 2; ch++) {
       const data = impulse.getChannelData(ch);
       for (let i = 0; i < length; i++) {
         const t = i / length;
         const env = Math.pow(1 - t, decay);
+        // slightly darker tail
         data[i] = (Math.random() * 2 - 1) * env;
       }
     }
@@ -140,6 +141,7 @@
 
     const input = ctx.createGain();
 
+    // Shape: remove rumble, keep sparkle
     const hpf = ctx.createBiquadFilter();
     hpf.type = "highpass";
     hpf.frequency.value = 120;
@@ -148,30 +150,43 @@
     lpf.type = "lowpass";
     lpf.frequency.value = 12000;
 
+    // Reverb chain: pre-delay -> convolver -> darker wet -> wet gain
+    const preDelay = ctx.createDelay(0.25);
+    preDelay.delayTime.value = 0.06;
+
     const convolver = ctx.createConvolver();
-    convolver.buffer = makeImpulseResponse(ctx, 2.4, 3.2);
+    convolver.buffer = makeImpulseResponse(ctx, 5.0, 4.6);
+
+    const wetLPF = ctx.createBiquadFilter();
+    wetLPF.type = "lowpass";
+    wetLPF.frequency.value = 6500;
 
     const wet = ctx.createGain();
-    wet.gain.value = 0.28;
+    wet.gain.value = 0.58;
 
     const dry = ctx.createGain();
-    dry.gain.value = 0.92;
+    dry.gain.value = 0.75;
 
     const master = ctx.createGain();
-    master.gain.value = 0.38;
+    master.gain.value = 0.36;
 
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -18;
-    comp.knee.value = 18;
-    comp.ratio.value = 6;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.18;
+    comp.threshold.value = -20;
+    comp.knee.value = 22;
+    comp.ratio.value = 7;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.22;
 
-    // routing
+    // Routing
     input.connect(hpf).connect(lpf);
+
+    // dry
     lpf.connect(dry).connect(master);
-    lpf.connect(convolver);
-    convolver.connect(wet).connect(master);
+
+    // wet
+    lpf.connect(preDelay);
+    preDelay.connect(convolver);
+    convolver.connect(wetLPF).connect(wet).connect(master);
 
     master.connect(comp).connect(ctx.destination);
 
@@ -179,7 +194,7 @@
     return audio;
   }
 
-  // Simple stable hash for mapping titles/users to notes
+  // Stable hash for mapping titles/users to notes
   function hash32(str) {
     let h = 2166136261 >>> 0;
     for (let i = 0; i < str.length; i++) {
@@ -189,15 +204,18 @@
     return h >>> 0;
   }
 
+  // Wind-chime-friendly tuning: G major pentatonic (G A B D E)
+  // (very common “always pleasant” set)
+  const SCALE = [392.00, 440.00, 493.88, 587.33, 659.25];
+
   function playChime(f0, strength = 0.6) {
     const { ctx, input } = ensureAudio();
     const now = ctx.currentTime;
 
-    // Inharmonic partials (bar/tube-ish)
-    const ratios = [1.0, 2.756, 5.404, 8.933, 13.343];
-    const gains  = [1.0, 0.55, 0.32, 0.20, 0.12];
-
-    const detuneCents = (Math.random() * 10 - 5);
+    // Modal partials (inharmonic-ish) for a more "tube/chime" character.
+    // Also adds a tiny paired detune to create a natural shimmer.
+    const ratios = [1.00, 2.01, 2.76, 3.90, 5.41, 8.93];
+    const gains  = [1.00, 0.40, 0.32, 0.22, 0.14, 0.10];
 
     const voice = ctx.createGain();
     const amp = ctx.createGain();
@@ -205,104 +223,103 @@
 
     pan.pan.value = (Math.random() * 0.6 - 0.3);
 
+    // Softer strike, longer ring
     amp.gain.setValueAtTime(0.0001, now);
-    amp.gain.exponentialRampToValueAtTime(0.85 * strength, now + 0.008);
-    amp.gain.exponentialRampToValueAtTime(0.0001, now + 2.2);
+    amp.gain.exponentialRampToValueAtTime(0.80 * strength, now + 0.010);
+    amp.gain.exponentialRampToValueAtTime(0.0001, now + 3.1);
 
     voice.connect(amp).connect(pan).connect(input);
 
     for (let i = 0; i < ratios.length; i++) {
-      const o = ctx.createOscillator();
-      o.type = "sine";
-      o.frequency.value = f0 * ratios[i];
-      o.detune.value = detuneCents;
+      const baseFreq = f0 * ratios[i];
 
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, now);
-      g.gain.exponentialRampToValueAtTime(gains[i] * strength, now + 0.006);
+      // Two near-identical sines for gentle beating/shimmer
+      for (let p = 0; p < 2; p++) {
+        const o = ctx.createOscillator();
+        o.type = "sine";
+        o.frequency.value = baseFreq * (p === 0 ? 1.0 : 1.0 + (Math.random() * 0.004));
 
-      // Higher partials die sooner
-      const tail = 1.65 - i * 0.18;
-      g.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.55, tail));
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(gains[i] * strength * (p === 0 ? 1 : 0.85), now + 0.008);
 
-      o.connect(g).connect(voice);
-      o.start(now);
-      o.stop(now + 2.4);
+        // Higher modes die sooner
+        const tail = 2.6 - i * 0.28;
+        g.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.70, tail));
+
+        o.connect(g).connect(voice);
+        o.start(now);
+        o.stop(now + 3.3);
+      }
     }
 
-    // Soft strike noise
-    const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.03), ctx.sampleRate);
+    // Strike noise: a tiny filtered "clink"
+    const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.04), ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    for (let i = 0; i < d.length; i++) {
+      const t = i / d.length;
+      d[i] = (Math.random() * 2 - 1) * (1 - t);
+    }
 
     const noise = ctx.createBufferSource();
     noise.buffer = noiseBuf;
 
+    const nHPF = ctx.createBiquadFilter();
+    nHPF.type = "highpass";
+    nHPF.frequency.value = 900;
+
     const nGain = ctx.createGain();
     nGain.gain.setValueAtTime(0.0001, now);
-    nGain.gain.exponentialRampToValueAtTime(0.12 * strength, now + 0.002);
-    nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+    nGain.gain.exponentialRampToValueAtTime(0.10 * strength, now + 0.004);
+    nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
 
-    noise.connect(nGain).connect(voice);
+    noise.connect(nHPF).connect(nGain).connect(voice);
     noise.start(now);
-    noise.stop(now + 0.04);
+    noise.stop(now + 0.07);
   }
 
   function chimeForEvent(ev) {
-    // Pentatonic-ish; title selects pitch, user selects octave
-    const scale = [261.63, 293.66, 329.63, 392.00, 440.00]; // C D E G A
     const title = ev?.title || "unknown";
     const user  = ev?.user  || "unknown";
 
     const hT = hash32(title);
     const hU = hash32(user);
 
-    const base = scale[hT % scale.length];
+    // Keep pitch range sane (no dog-whistle edits)
+    const base = SCALE[hT % SCALE.length];
     const octave = (hU % 3); // 0..2
     const freq = base * Math.pow(2, octave);
 
+    // Strength varies a bit with edit size if available
     let strength = 0.55;
     if (typeof ev.length === "object" && typeof ev.length.new === "number" && typeof ev.length.old === "number") {
       const delta = Math.min(2000, Math.abs(ev.length.new - ev.length.old));
-      strength = 0.35 + (delta / 2000) * 0.55;
+      strength = 0.35 + (delta / 2000) * 0.60;
     }
 
-    // Soft limiter: keep overlap, but cap total density.
     const nowMs = performance.now();
     recentChimes.push(nowMs);
     while (recentChimes.length && (nowMs - recentChimes[0] > 1000)) recentChimes.shift();
+
     if (recentChimes.length <= MAX_CHIMES_PER_SEC) {
       playChime(freq, strength);
-      nudgeChimes(0.6 + strength * 1.6);
+      nudgeChimes(0.7 + strength * 1.8);
     } else {
-      // Still give a tiny animation tick so the page feels alive.
       nudgeChimes(0.25);
     }
   }
 
   function matchesFilters(ev) {
     if (!ev) return false;
-
-    // ignore test/canary events
     if (ev?.meta?.domain === "canary") return false;
-
-    // keep it to actual edits (ignore log events etc.)
     if (typeof ev.type === "string" && ev.type !== "edit") return false;
-
-    // safe default: one wiki domain
     if (DEFAULT_DOMAIN && ev.server_name !== DEFAULT_DOMAIN) return false;
-
-    // articles only (namespace 0)
-    if (typeof ev.namespace === "number" && ev.namespace !== 0) return false;
-
-    // hide bot edits
+    if (typeof ev.namespace === "number" && ev.namespace !== 0) return false; // articles only
     if (ev.bot === true) return false;
-
     return true;
   }
 
   function toPageUrl(ev) {
-    // Prefer meta.uri if present; otherwise construct
     if (ev?.meta?.uri) return ev.meta.uri;
     const domain = ev?.server_name || DEFAULT_DOMAIN || "en.wikipedia.org";
     const title = ev?.title || "";
@@ -324,23 +341,22 @@
 
     const sub = document.createElement("div");
     sub.className = "sub";
-    const who = ev.user ? ev.user : "unknown";
+    sub.textContent = ev.user ? ev.user : "unknown";
+
     const when = (typeof ev.timestamp === "number")
       ? new Date(ev.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : "";
-    sub.textContent = `${who}`;
+
+    right.textContent = when;
 
     left.appendChild(a);
     left.appendChild(sub);
-
-    right.textContent = when;
 
     li.appendChild(left);
     li.appendChild(right);
 
     feedEl.prepend(li);
 
-    // cap list length
     while (feedEl.children.length > 60) feedEl.removeChild(feedEl.lastChild);
   }
 
@@ -384,20 +400,20 @@
     else stop();
   });
 
-  // --- ASCII wind chimes animation ---
+  // --- ASCII wind chimes animation (clearer hanger + strings + tubes + clapper) ---
   let chimeImpulse = 0;
 
   function nudgeChimes(amount = 1) {
-    chimeImpulse = Math.min(8, chimeImpulse + amount);
+    chimeImpulse = Math.min(9, chimeImpulse + amount);
   }
 
   function buildChimesFrame(tMs) {
-    const width = 54;
-    const height = 14;
+    const width = 66;
+    const height = 18;
 
-    const base = 0.9;
-    const amp = base + chimeImpulse;
-    const t = tMs * 0.002;
+    const base = 0.8;
+    const amp = base + chimeImpulse;       // sway amplitude
+    const t = tMs * 0.0018;
 
     const grid = Array.from({ length: height }, () => Array(width).fill(" "));
 
@@ -408,30 +424,71 @@
         if (xx >= 0 && xx < width) grid[y][xx] = s[i];
       }
     }
-
-    put(14, 0, ".------------------------.");
-    put(14, 1, "|  o  o  o  o  o  o      |");
-    put(14, 2, "'------------------------'");
-
-    const anchors = [18, 21, 24, 27, 30, 33];
-
-    for (let i = 0; i < anchors.length; i++) {
-      const phase = i * 0.85;
-      const sway = Math.round(Math.sin(t + phase) * amp * 0.35);
-
-      const x = anchors[i] + sway;
-
-      put(x, 3, "|");
-      put(x, 4, "|");
-
-      const tubeLen = 3 + (i % 3);
-      for (let k = 0; k < tubeLen; k++) put(x - 1, 5 + k, "||");
-
-      put(x, 5 + tubeLen, "v");
+    function set(x, y, ch) {
+      if (x < 0 || x >= width || y < 0 || y >= height) return;
+      grid[y][x] = ch;
     }
 
-    const gust = Math.round((Math.sin(t * 0.7) + 1) * 8);
-    put(2, 10, "wind: " + "~".repeat(gust));
+    // A little breeze to the right
+    const gust = Math.round((Math.sin(t * 0.8) + 1) * 10);
+    put(2, 2, "wind  " + "~".repeat(gust));
+
+    // Top ring + hanger
+    const cx = 34;
+    put(cx - 2, 0, " .-.");
+    put(cx - 2, 1, "(   )");
+    put(cx - 2, 2, " `-´");
+    set(cx, 3, "|");
+    set(cx, 4, "|");
+
+    // Crossbar
+    put(cx - 16, 5, ".------------------------------.");
+    put(cx - 16, 6, "|  o   o   o   o   o   o      |");
+    put(cx - 16, 7, "'------------------------------'");
+
+    // Anchor positions under the "o"s on row 6
+    const anchors = [cx - 12, cx - 8, cx - 4, cx, cx + 4, cx + 8];
+
+    // Central clapper string
+    const clapperSway = Math.round(Math.sin(t + 0.4) * amp * 0.22);
+    const clx = cx + clapperSway;
+
+    // Draw each tube with angled string depending on sway
+    for (let i = 0; i < anchors.length; i++) {
+      const phase = i * 0.78;
+      const sway = Math.round(Math.sin(t + phase) * amp * 0.30);
+      const ax = anchors[i];
+      const x = ax + sway;
+
+      // string from bar (row 7) downwards: show direction
+      const dx = x - ax;
+      const s1 = dx > 0 ? "\\" : (dx < 0 ? "/" : "|");
+
+      // two-line string for clarity
+      set(ax, 8, s1);
+      set(x, 9, "|");
+
+      // tube length variety
+      const tubeLen = 4 + ((i * 3) % 3); // 4..6
+      for (let k = 0; k < tubeLen; k++) {
+        // tube body
+        put(x - 1, 10 + k, "||");
+      }
+      // tube bottom cap
+      put(x - 1, 10 + tubeLen, "==");
+    }
+
+    // Central clapper (striker) – helps it read as a chime
+    // String
+    set(cx, 8, "|");
+    set(clx, 9, "|");
+    // Clapper body
+    put(clx - 2, 12, "/\\");
+    put(clx - 2, 13, "||");
+    put(clx - 2, 14, "()");
+    // A little motion cue
+    if (clapperSway > 0) put(clx + 2, 14, ">");
+    if (clapperSway < 0) put(clx - 4, 14, "<");
 
     return grid.map(row => row.join("")).join("\n");
   }
