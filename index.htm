@@ -406,8 +406,8 @@
     // Body is fixed
     const cx = Math.floor(width / 2);
 
-    // Motion is mostly impulse-driven (so it feels "played", not drifting constantly)
-    const baseMove = 0.12;              // tiny idle motion
+    // Motion is mostly impulse-driven (played effect)
+    const baseMove = 0.10;              // tiny idle motion
     const amp = baseMove + chimeImpulse * 0.95;
 
     const grid = Array.from({ length: height }, () => Array(width).fill(" "));
@@ -442,7 +442,9 @@
     const anchors = [];
     for (let i = 0; i < tubeCount; i++) anchors.push(Math.round(innerStart + step * i));
 
-    // Tubes (move)
+    // Tubes (move) — all the same size
+    const TUBE_LEN = 5;
+
     for (let i = 0; i < anchors.length; i++) {
       const ax = anchors[i];
 
@@ -450,19 +452,15 @@
       const tubeSway = Math.round(Math.sin(localT * 1.35 + i * 0.85 + t) * amp * 0.9);
       const x = ax + tubeSway;
 
-      // Make the motion readable: angled hint at the bar, then vertical string
+      // readable swing cue: angled hint at the bar, then vertical string
       const dx = x - ax;
       set(ax, 7, dx > 0 ? "\\" : dx < 0 ? "/" : "|");
       set(x, 8, "|");
 
-      // Tube body
-      const tubeLen = 4 + (i % 3);
-      for (let k = 0; k < tubeLen; k++) put(x - 1, 9 + k, "||");
-      put(x - 1, 9 + tubeLen, "[]");
+      // tube body (uniform)
+      for (let k = 0; k < TUBE_LEN; k++) put(x - 1, 9 + k, "||");
+      put(x - 1, 9 + TUBE_LEN, "[]");
     }
-
-    // A small fixed clapper marker (does NOT move; tubes do the work visually)
-    put(cx - 1, 12, "()");
 
     return grid.map(r => r.join("")).join("\n");
   }
