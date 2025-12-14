@@ -12,11 +12,18 @@
 
     html, body { height: 100%; }
     body{
-      margin: 24px;
-      max-width: 860px;
+      margin: 0;
+      padding: 16px;
+      width: 100%;
+      box-sizing: border-box;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       background: var(--bg);
       color: var(--white);
+    }
+
+    .wrap{
+      max-width: 860px;
+      margin: 0 auto;
     }
 
     h1{ margin: 0 0 14px; font-size: 22px; font-weight: 700; }
@@ -25,7 +32,9 @@
       display: flex;
       gap: 14px;
       align-items: center;
+      justify-content: space-between;
       margin-bottom: 14px;
+      flex-wrap: wrap;
     }
 
     button{
@@ -43,7 +52,7 @@
 
     #asciiChimes{
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      font-size: 14px;
+      font-size: clamp(11px, 2.9vw, 14px);
       line-height: 1.05;
       padding: 14px 16px;
       border: 2px solid var(--white);
@@ -51,7 +60,7 @@
       white-space: pre;
       user-select: none;
       margin: 12px 0 14px;
-      overflow: hidden;
+      overflow: hidden;   /* no sideways cut-off; we resize the art instead */
     }
 
     ul{
@@ -75,25 +84,37 @@
     a, a:visited{
       color: var(--white);
       text-decoration: none;
+      word-break: break-word;     /* long titles wrap */
+      overflow-wrap: anywhere;
     }
     a:hover{ text-decoration: underline; }
 
     .meta{ font-size: 12px; white-space: nowrap; }
     .sub{ font-size: 12px; margin-top: 2px; }
+
+    @media (max-width: 480px){
+      body{ padding: 12px; }
+      .top{ flex-direction: column; align-items: stretch; gap: 10px; }
+      button{ width: 100%; }
+      li{ grid-template-columns: 1fr; }
+      .meta{ white-space: normal; }
+    }
   </style>
 </head>
 
 <body>
-  <h1>Wiki Chimes</h1>
+  <div class="wrap">
+    <h1>Wiki Chimes</h1>
 
-  <div class="top">
-    <button id="toggle">Start</button>
-    <div class="status" id="status">stopped</div>
+    <div class="top">
+      <button id="toggle">Start</button>
+      <div class="status" id="status">stopped</div>
+    </div>
+
+    <pre id="asciiChimes" aria-label="Wind chimes animation"></pre>
+
+    <ul id="feed" aria-label="Live edits list"></ul>
   </div>
-
-  <pre id="asciiChimes" aria-label="Wind chimes animation"></pre>
-
-  <ul id="feed" aria-label="Live edits list"></ul>
 
 <script>
 (() => {
@@ -111,7 +132,6 @@
     if (max !== min) {
       const d = max - min;
       s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-
       switch (max) {
         case r: h = (g - b) / d + (g < b ? 6 : 0); break;
         case g: h = (b - r) / d + 2; break;
@@ -266,7 +286,6 @@
       }
     }
 
-    // Tiny strike "clink"
     const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.04), ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) {
@@ -341,14 +360,41 @@
     while (feedEl.children.length > 60) feedEl.removeChild(feedEl.lastChild);
   }
 
-  // --- ASCII chimes (classic silhouette) ---
+  // --- ASCII chimes (auto-fit to available width) ---
   let chimeImpulse = 0;
   function nudgeChimes(amount = 1) { chimeImpulse = Math.min(9, chimeImpulse + amount); }
 
-  function buildChimesFrame(tMs) {
-    const width = 58, height = 17;
-    const t = tMs * 0.0016;
+  let cachedCols = 58;
+  function measureCols(){
+    // Estimate how many monospace columns fit in the <pre>
+    const probe = document.createElement("span");
+    probe.style.position = "absolute";
+    probe.style.visibility = "hidden";
+    probe.style.whiteSpace = "pre";
+    probe.style.fontFamily = getComputedStyle(chimesEl).fontFamily;
+    probe.style.fontSize = getComputedStyle(chimesEl).fontSize;
+    probe.textContent = "M";
+    document.body.appendChild(probe);
+    const charW = probe.getBoundingClientRect().width || 8;
+    document.body.removeChild(probe);
 
+    const cs = getComputedStyle(chimesEl);
+    const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const innerW = Math.max(120, chimesEl.clientWidth - padX);
+
+    const cols = Math.floor(innerW / charW);
+    cachedCols = Math.max(38, Math.min(58, cols));
+  }
+
+  window.addEventListener("resize", () => measureCols());
+  // measure once the browser has laid things out
+  requestAnimationFrame(measureCols);
+
+  function buildChimesFrame(tMs) {
+    const width = cachedCols;
+    const height = 17;
+
+    const t = tMs * 0.0016;
     const amp = 1.0 + chimeImpulse * 0.9;
     const sway = Math.round(Math.sin(t) * amp * 0.35);
     const cx = Math.floor(width / 2) + sway;
@@ -362,19 +408,30 @@
 
     // ring + hanger
     put(cx - 2, 0, "(__)");
-    set(cx, 1, " ");
     set(cx, 2, "|");
     set(cx, 3, "|");
 
-    // bar
-    put(cx - 15, 4, "+----------------------------+");
-    put(cx - 15, 5, "|                            |");
-    put(cx - 15, 6, "+----------------------------+");
+    // dynamic bar length
+    const barLen = Math.max(22, Math.min(30, width - 10));
+    const barStart = Math.max(0, Math.min(width - barLen, cx - Math.floor(barLen/2)));
 
-    // tubes (straight strings, simple read)
-    const anchors = [cx - 12, cx - 8, cx - 4, cx, cx + 4, cx + 8, cx + 12];
+    const top = "+" + "-".repeat(barLen - 2) + "+";
+    const mid = "|" + " ".repeat(barLen - 2) + "|";
+
+    put(barStart, 4, top);
+    put(barStart, 5, mid);
+    put(barStart, 6, top);
+
+    // tube count adapts to width
+    const tubeCount = width < 48 ? 5 : 7;
+    const innerStart = barStart + 2;
+    const innerEnd = barStart + barLen - 3;
+    const step = (innerEnd - innerStart) / (tubeCount - 1);
+
+    const anchors = [];
+    for (let i = 0; i < tubeCount; i++) anchors.push(Math.round(innerStart + step * i));
+
     const localT = tMs * 0.0019;
-
     const clSway = Math.round(Math.sin(localT * 1.2 + 0.7) * amp * 0.18);
     const clx = cx + clSway;
 
@@ -382,11 +439,9 @@
       const tubeSway = Math.round(Math.sin(localT + i * 0.55) * amp * 0.22);
       const x = anchors[i] + tubeSway;
 
-      // string
       set(x, 7, "|");
       set(x, 8, "|");
 
-      // tube
       const tubeLen = 4 + (i % 3);
       for (let k = 0; k < tubeLen; k++) put(x - 1, 9 + k, "||");
       put(x - 1, 9 + tubeLen, "[]");
@@ -457,6 +512,7 @@
       let ev;
       try { ev = JSON.parse(msg.data); } catch { return; }
       if (!matchesFilters(ev)) return;
+
       chimeForEvent(ev);
       addToFeed(ev);
     };
