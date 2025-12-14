@@ -3,96 +3,183 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Wikipedia Wind Chime</title>
+  <title>Wiki Chimes</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 860px; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
-    label { display: grid; gap: 6px; font-size: 14px; }
-    input[type="text"], input[type="number"] { padding: 8px 10px; border: 1px solid #ccc; border-radius: 10px; min-width: 240px; }
-    input[type="range"] { width: 240px; }
-    button { padding: 10px 14px; border: 0; border-radius: 12px; cursor: pointer; }
-    button.primary { background: #111; color: #fff; }
-    button.secondary { background: #eee; }
-    .status { margin-top: 14px; padding: 12px; border: 1px solid #ddd; border-radius: 12px; }
-    .log { margin-top: 14px; padding: 12px; border: 1px solid #ddd; border-radius: 12px; height: 260px; overflow: auto; background: #fafafa; }
-    .muted { opacity: 0.7; }
-    small { color: #555; }
-    code { background: #f2f2f2; padding: 2px 6px; border-radius: 6px; }
+    :root { color-scheme: light dark; }
+    body{
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 24px;
+      max-width: 820px;
+    }
+    h1{ margin: 0 0 14px; font-size: 22px; }
+    .top{
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    button{
+      padding: 10px 14px;
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+      background: #111;
+      color: #fff;
+      font-weight: 600;
+    }
+    button[disabled]{ opacity: 0.6; cursor: not-allowed; }
+    .status{
+      font-size: 13px;
+      opacity: 0.75;
+    }
+
+    #asciiChimes{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.05;
+      padding: 14px 16px;
+      border: 1px solid #ddd;
+      border-radius: 14px;
+      background: rgba(127,127,127,0.06);
+      overflow: hidden;
+      user-select: none;
+      margin: 12px 0 14px;
+      white-space: pre;
+    }
+
+    ul{
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      border: 1px solid #ddd;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    li{
+      padding: 10px 12px;
+      border-top: 1px solid rgba(127,127,127,0.18);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: baseline;
+      background: rgba(127,127,127,0.03);
+    }
+    li:first-child{ border-top: 0; }
+    a{
+      text-decoration: none;
+    }
+    a:hover{ text-decoration: underline; }
+    .meta{
+      font-size: 12px;
+      opacity: 0.72;
+      white-space: nowrap;
+    }
+    .sub{
+      font-size: 12px;
+      opacity: 0.7;
+      margin-top: 2px;
+    }
   </style>
 </head>
+
 <body>
-  <h1>Wikipedia Wind Chime</h1>
-  <p class="muted">
-    Plays a bell note for each matching edit from Wikimedia EventStreams (<code>recentchange</code>). :contentReference[oaicite:1]{index=1}
-  </p>
+  <h1>Wiki Chimes</h1>
 
-  <div class="row">
-    <label>
-      Wiki domain (filter)
-      <input id="domain" type="text" value="en.wikipedia.org" />
-      <small>Examples: <code>en.wikipedia.org</code>, <code>fr.wikipedia.org</code>. Leave blank for all.</small>
-    </label>
-
-    <label>
-      Exact page title (optional)
-      <input id="title" type="text" placeholder="e.g. Cat (leave blank for all pages)" />
-      <small>Matches <em>exact</em> title string in the event.</small>
-    </label>
+  <div class="top">
+    <button id="toggle">Start</button>
+    <div class="status" id="status">stopped</div>
   </div>
 
-  <div class="row" style="margin-top: 10px;">
-    <label style="min-width: 240px;">
-      Volume
-      <input id="vol" type="range" min="0" max="1" step="0.01" value="0.4" />
-    </label>
+  <pre id="asciiChimes" aria-label="Wind chimes animation"></pre>
 
-    <label style="min-width: 240px;">
-      Minimum gap between chimes (ms)
-      <input id="gap" type="number" min="0" max="2000" step="10" value="80" />
-      <small>Prevents machine-gun blur on busy streams.</small>
-    </label>
-
-    <label style="display:flex; gap:10px; align-items:center; margin-bottom: 6px;">
-      <input id="mainspace" type="checkbox" checked />
-      Articles only (namespace 0)
-    </label>
-
-    <label style="display:flex; gap:10px; align-items:center; margin-bottom: 6px;">
-      <input id="hidebots" type="checkbox" checked />
-      Hide bot edits
-    </label>
-  </div>
-
-  <div class="row" style="margin-top: 12px;">
-    <button id="start" class="primary">Start</button>
-    <button id="stop" class="secondary" disabled>Stop</button>
-    <button id="test" class="secondary">Test chime</button>
-  </div>
-
-  <div class="status" id="status">
-    <div><strong>Connection:</strong> <span id="conn">stopped</span></div>
-    <div><strong>Chimes:</strong> <span id="count">0</span></div>
-    <div><strong>Last:</strong> <span id="last">—</span></div>
-  </div>
-
-  <div class="log" id="log" aria-label="Event log"></div>
+  <ul id="feed" aria-label="Live edits list"></ul>
 
 <script>
 (() => {
+  // Wikimedia recent changes firehose (SSE)
   const STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange";
 
-  const $ = (id) => document.getElementById(id);
-  const connEl = $("conn");
-  const countEl = $("count");
-  const lastEl = $("last");
-  const logEl = $("log");
+  // Keep this conservative so it’s listenable.
+  // You can change to "" to allow all wikis.
+  const DEFAULT_DOMAIN = "en.wikipedia.org";
+
+  const toggleBtn = document.getElementById("toggle");
+  const statusEl  = document.getElementById("status");
+  const feedEl    = document.getElementById("feed");
+  const chimesEl  = document.getElementById("asciiChimes");
 
   let es = null;
-  let audio = null;
-  let lastChimeAt = 0;
-  let chimeCount = 0;
+  let running = false;
 
-  // Simple stable hash (FNV-1a-ish) for mapping titles/users to notes
+  // --- soft audio limiter (keeps overlap, prevents total chaos) ---
+  const recentChimes = []; // timestamps (ms) of played chimes
+  const MAX_CHIMES_PER_SEC = 12;
+
+  // --- Audio ---
+  let audio = null;
+
+  function makeImpulseResponse(ctx, seconds = 2.2, decay = 3.5) {
+    const rate = ctx.sampleRate;
+    const length = Math.floor(rate * seconds);
+    const impulse = ctx.createBuffer(2, length, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = impulse.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        const t = i / length;
+        const env = Math.pow(1 - t, decay);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+    }
+    return impulse;
+  }
+
+  function ensureAudio() {
+    if (audio) return audio;
+
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const input = ctx.createGain();
+
+    const hpf = ctx.createBiquadFilter();
+    hpf.type = "highpass";
+    hpf.frequency.value = 120;
+
+    const lpf = ctx.createBiquadFilter();
+    lpf.type = "lowpass";
+    lpf.frequency.value = 12000;
+
+    const convolver = ctx.createConvolver();
+    convolver.buffer = makeImpulseResponse(ctx, 2.4, 3.2);
+
+    const wet = ctx.createGain();
+    wet.gain.value = 0.28;
+
+    const dry = ctx.createGain();
+    dry.gain.value = 0.92;
+
+    const master = ctx.createGain();
+    master.gain.value = 0.38;
+
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -18;
+    comp.knee.value = 18;
+    comp.ratio.value = 6;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.18;
+
+    // routing
+    input.connect(hpf).connect(lpf);
+    lpf.connect(dry).connect(master);
+    lpf.connect(convolver);
+    convolver.connect(wet).connect(master);
+
+    master.connect(comp).connect(ctx.destination);
+
+    audio = { ctx, input, master };
+    return audio;
+  }
+
+  // Simple stable hash for mapping titles/users to notes
   function hash32(str) {
     let h = 2166136261 >>> 0;
     for (let i = 0; i < str.length; i++) {
@@ -102,86 +189,70 @@
     return h >>> 0;
   }
 
-  function log(line) {
-    const div = document.createElement("div");
-    div.textContent = line;
-    logEl.prepend(div);
-  }
-
-  function ensureAudio() {
-    if (audio) return audio;
-
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-    // Master chain: bell -> HPF -> light delay -> master gain -> destination
-    const master = ctx.createGain();
-    master.gain.value = parseFloat($("vol").value);
-
-    const hpf = ctx.createBiquadFilter();
-    hpf.type = "highpass";
-    hpf.frequency.value = 140;
-
-    const delay = ctx.createDelay(0.25);
-    delay.delayTime.value = 0.055;
-
-    const fb = ctx.createGain();
-    fb.gain.value = 0.18;
-    delay.connect(fb).connect(delay);
-
-    hpf.connect(delay).connect(master);
-    hpf.connect(master);
-    master.connect(ctx.destination);
-
-    audio = { ctx, master, hpf };
-    return audio;
-  }
-
-  function setVolume(v) {
-    if (!audio) return;
-    audio.master.gain.setTargetAtTime(v, audio.ctx.currentTime, 0.01);
-  }
-
-  // Bell-ish FM chime
-  function playBell(freq, strength = 0.6) {
-    const { ctx, hpf } = ensureAudio();
-
+  function playChime(f0, strength = 0.6) {
+    const { ctx, input } = ensureAudio();
     const now = ctx.currentTime;
 
-    const carrier = ctx.createOscillator();
-    carrier.type = "sine";
-    carrier.frequency.value = freq;
+    // Inharmonic partials (bar/tube-ish)
+    const ratios = [1.0, 2.756, 5.404, 8.933, 13.343];
+    const gains  = [1.0, 0.55, 0.32, 0.20, 0.12];
 
-    const mod = ctx.createOscillator();
-    mod.type = "sine";
-    mod.frequency.value = freq * 2.01;
+    const detuneCents = (Math.random() * 10 - 5);
 
-    const modGain = ctx.createGain();
-    // Start bright, then decay quickly
-    modGain.gain.setValueAtTime(freq * 1.8 * strength, now);
-    modGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-
-    // FM: mod -> modGain -> carrier.frequency
-    mod.connect(modGain);
-    modGain.connect(carrier.frequency);
-
+    const voice = ctx.createGain();
     const amp = ctx.createGain();
+    const pan = ctx.createStereoPanner();
+
+    pan.pan.value = (Math.random() * 0.6 - 0.3);
+
     amp.gain.setValueAtTime(0.0001, now);
-    amp.gain.exponentialRampToValueAtTime(0.6 * strength, now + 0.01);
-    amp.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+    amp.gain.exponentialRampToValueAtTime(0.85 * strength, now + 0.008);
+    amp.gain.exponentialRampToValueAtTime(0.0001, now + 2.2);
 
-    carrier.connect(amp).connect(hpf);
+    voice.connect(amp).connect(pan).connect(input);
 
-    carrier.start(now);
-    mod.start(now);
-    carrier.stop(now + 1.6);
-    mod.stop(now + 1.6);
+    for (let i = 0; i < ratios.length; i++) {
+      const o = ctx.createOscillator();
+      o.type = "sine";
+      o.frequency.value = f0 * ratios[i];
+      o.detune.value = detuneCents;
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(gains[i] * strength, now + 0.006);
+
+      // Higher partials die sooner
+      const tail = 1.65 - i * 0.18;
+      g.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.55, tail));
+
+      o.connect(g).connect(voice);
+      o.start(now);
+      o.stop(now + 2.4);
+    }
+
+    // Soft strike noise
+    const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.03), ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(0.0001, now);
+    nGain.gain.exponentialRampToValueAtTime(0.12 * strength, now + 0.002);
+    nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+
+    noise.connect(nGain).connect(voice);
+    noise.start(now);
+    noise.stop(now + 0.04);
   }
 
   function chimeForEvent(ev) {
-    // Pentatonic-ish set; title hash selects note, user hash selects octave.
+    // Pentatonic-ish; title selects pitch, user selects octave
     const scale = [261.63, 293.66, 329.63, 392.00, 440.00]; // C D E G A
-    const title = (ev && ev.title) ? ev.title : "unknown";
-    const user = (ev && ev.user) ? ev.user : "unknown";
+    const title = ev?.title || "unknown";
+    const user  = ev?.user  || "unknown";
 
     const hT = hash32(title);
     const hU = hash32(user);
@@ -190,105 +261,194 @@
     const octave = (hU % 3); // 0..2
     const freq = base * Math.pow(2, octave);
 
-    // Slightly vary strength by change size if available
     let strength = 0.55;
     if (typeof ev.length === "object" && typeof ev.length.new === "number" && typeof ev.length.old === "number") {
       const delta = Math.min(2000, Math.abs(ev.length.new - ev.length.old));
       strength = 0.35 + (delta / 2000) * 0.55;
     }
 
-    playBell(freq, strength);
+    // Soft limiter: keep overlap, but cap total density.
+    const nowMs = performance.now();
+    recentChimes.push(nowMs);
+    while (recentChimes.length && (nowMs - recentChimes[0] > 1000)) recentChimes.shift();
+    if (recentChimes.length <= MAX_CHIMES_PER_SEC) {
+      playChime(freq, strength);
+      nudgeChimes(0.6 + strength * 1.6);
+    } else {
+      // Still give a tiny animation tick so the page feels alive.
+      nudgeChimes(0.25);
+    }
   }
 
   function matchesFilters(ev) {
-    // Wikitech docs show meta.domain can be "canary" test events; ignore them. :contentReference[oaicite:2]{index=2}
+    if (!ev) return false;
+
+    // ignore test/canary events
     if (ev?.meta?.domain === "canary") return false;
 
-    const domainFilter = $("domain").value.trim();
-    if (domainFilter) {
-      // EventStreams examples use server_name for wiki domain filtering. :contentReference[oaicite:3]{index=3}
-      if (ev.server_name !== domainFilter) return false;
-    }
-
-    const titleFilter = $("title").value.trim();
-    if (titleFilter) {
-      if (ev.title !== titleFilter) return false;
-    }
-
-    if ($("mainspace").checked) {
-      // RecentChange events include namespace in the RC feed schema. :contentReference[oaicite:4]{index=4}
-      if (typeof ev.namespace === "number" && ev.namespace !== 0) return false;
-    }
-
-    if ($("hidebots").checked) {
-      if (ev.bot === true) return false;
-    }
-
-    // Keep it to actual edits when possible (RecentChange stream can include logs/new pages, etc.)
+    // keep it to actual edits (ignore log events etc.)
     if (typeof ev.type === "string" && ev.type !== "edit") return false;
+
+    // safe default: one wiki domain
+    if (DEFAULT_DOMAIN && ev.server_name !== DEFAULT_DOMAIN) return false;
+
+    // articles only (namespace 0)
+    if (typeof ev.namespace === "number" && ev.namespace !== 0) return false;
+
+    // hide bot edits
+    if (ev.bot === true) return false;
 
     return true;
   }
 
+  function toPageUrl(ev) {
+    // Prefer meta.uri if present; otherwise construct
+    if (ev?.meta?.uri) return ev.meta.uri;
+    const domain = ev?.server_name || DEFAULT_DOMAIN || "en.wikipedia.org";
+    const title = ev?.title || "";
+    return `https://${domain}/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
+  }
+
+  function addToFeed(ev) {
+    const li = document.createElement("li");
+
+    const left = document.createElement("div");
+    const right = document.createElement("div");
+    right.className = "meta";
+
+    const a = document.createElement("a");
+    a.href = toPageUrl(ev);
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = ev.title || "(untitled)";
+
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    const who = ev.user ? ev.user : "unknown";
+    const when = (typeof ev.timestamp === "number")
+      ? new Date(ev.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "";
+    sub.textContent = `${who}`;
+
+    left.appendChild(a);
+    left.appendChild(sub);
+
+    right.textContent = when;
+
+    li.appendChild(left);
+    li.appendChild(right);
+
+    feedEl.prepend(li);
+
+    // cap list length
+    while (feedEl.children.length > 60) feedEl.removeChild(feedEl.lastChild);
+  }
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
   function start() {
     const { ctx } = ensureAudio();
-    // Required in most browsers before sound will play
     ctx.resume();
 
     if (es) es.close();
-
     es = new EventSource(STREAM_URL);
-    connEl.textContent = "connecting…";
-    log(`Connecting to ${STREAM_URL}`);
 
-    es.onopen = () => {
-      connEl.textContent = "connected";
-      log("Connected.");
-    };
+    setStatus("connecting…");
+    toggleBtn.textContent = "Stop";
+    running = true;
 
-    es.onerror = (e) => {
-      connEl.textContent = "error (will retry)";
-      log("Connection error (EventSource will retry).");
-    };
+    es.onopen = () => setStatus(`listening (${DEFAULT_DOMAIN || "all wikis"})`);
+    es.onerror = () => setStatus("connection error (retrying…)");
 
     es.onmessage = (msg) => {
       let ev;
       try { ev = JSON.parse(msg.data); } catch { return; }
-
       if (!matchesFilters(ev)) return;
 
-      const gapMs = Math.max(0, parseInt($("gap").value || "0", 10));
-      const nowMs = performance.now();
-      if (gapMs > 0 && (nowMs - lastChimeAt) < gapMs) return;
-      lastChimeAt = nowMs;
-
       chimeForEvent(ev);
-
-      chimeCount++;
-      countEl.textContent = String(chimeCount);
-      lastEl.textContent = `${ev.title} — ${ev.user || "unknown"} (${ev.server_name || ev.wiki || "?"})`;
-      log(`♪ ${ev.server_name || ev.wiki || "?"} :: ${ev.title}`);
+      addToFeed(ev);
     };
-
-    $("start").disabled = true;
-    $("stop").disabled = false;
   }
 
   function stop() {
-    if (es) {
-      es.close();
-      es = null;
-    }
-    connEl.textContent = "stopped";
-    log("Stopped.");
-    $("start").disabled = false;
-    $("stop").disabled = true;
+    if (es) { es.close(); es = null; }
+    setStatus("stopped");
+    toggleBtn.textContent = "Start";
+    running = false;
   }
 
-  $("start").addEventListener("click", start);
-  $("stop").addEventListener("click", stop);
-  $("test").addEventListener("click", () => playBell(392.00, 0.7)); // G4
-  $("vol").addEventListener("input", (e) => setVolume(parseFloat(e.target.value)));
+  toggleBtn.addEventListener("click", () => {
+    if (!running) start();
+    else stop();
+  });
+
+  // --- ASCII wind chimes animation ---
+  let chimeImpulse = 0;
+
+  function nudgeChimes(amount = 1) {
+    chimeImpulse = Math.min(8, chimeImpulse + amount);
+  }
+
+  function buildChimesFrame(tMs) {
+    const width = 54;
+    const height = 14;
+
+    const base = 0.9;
+    const amp = base + chimeImpulse;
+    const t = tMs * 0.002;
+
+    const grid = Array.from({ length: height }, () => Array(width).fill(" "));
+
+    function put(x, y, s) {
+      if (y < 0 || y >= height) return;
+      for (let i = 0; i < s.length; i++) {
+        const xx = x + i;
+        if (xx >= 0 && xx < width) grid[y][xx] = s[i];
+      }
+    }
+
+    put(14, 0, ".------------------------.");
+    put(14, 1, "|  o  o  o  o  o  o      |");
+    put(14, 2, "'------------------------'");
+
+    const anchors = [18, 21, 24, 27, 30, 33];
+
+    for (let i = 0; i < anchors.length; i++) {
+      const phase = i * 0.85;
+      const sway = Math.round(Math.sin(t + phase) * amp * 0.35);
+
+      const x = anchors[i] + sway;
+
+      put(x, 3, "|");
+      put(x, 4, "|");
+
+      const tubeLen = 3 + (i % 3);
+      for (let k = 0; k < tubeLen; k++) put(x - 1, 5 + k, "||");
+
+      put(x, 5 + tubeLen, "v");
+    }
+
+    const gust = Math.round((Math.sin(t * 0.7) + 1) * 8);
+    put(2, 10, "wind: " + "~".repeat(gust));
+
+    return grid.map(row => row.join("")).join("\n");
+  }
+
+  function animateChimes(tMs) {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      chimesEl.textContent = buildChimesFrame(0);
+      return;
+    }
+    chimeImpulse *= 0.92;
+    if (chimeImpulse < 0.02) chimeImpulse = 0;
+
+    chimesEl.textContent = buildChimesFrame(tMs);
+    requestAnimationFrame(animateChimes);
+  }
+  requestAnimationFrame(animateChimes);
+
 })();
 </script>
 </body>
