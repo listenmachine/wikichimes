@@ -6,16 +6,17 @@
   <title>Wiki Chimes</title>
   <style>
     :root{
-      --bg: #8868a3;   /* fallback before JS runs */
+      --bg: #8868a3;  /* fallback before JS runs */
       --white: #ffffff;
     }
+
+    * { box-sizing: border-box; }
 
     html, body { height: 100%; }
     body{
       margin: 0;
       padding: 16px;
       width: 100%;
-      box-sizing: border-box;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       background: var(--bg);
       color: var(--white);
@@ -26,7 +27,11 @@
       margin: 0 auto;
     }
 
-    h1{ margin: 0 0 14px; font-size: 22px; font-weight: 700; }
+    h1{
+      margin: 0 0 14px;
+      font-size: 22px;
+      font-weight: 700;
+    }
 
     .top{
       display: flex;
@@ -60,7 +65,7 @@
       white-space: pre;
       user-select: none;
       margin: 12px 0 14px;
-      overflow: hidden;   /* no sideways cut-off; we resize the art instead */
+      overflow: hidden; /* we resize the art instead of overflowing sideways */
     }
 
     ul{
@@ -84,7 +89,7 @@
     a, a:visited{
       color: var(--white);
       text-decoration: none;
-      word-break: break-word;     /* long titles wrap */
+      word-break: break-word;
       overflow-wrap: anywhere;
     }
     a:hover{ text-decoration: underline; }
@@ -159,7 +164,7 @@
   let es = null;
   let running = false;
 
-  // Soft density limiter
+  // Soft density limiter (still allows overlap)
   const recentChimes = [];
   const MAX_CHIMES_PER_SEC = 10;
 
@@ -243,13 +248,14 @@
     return h >>> 0;
   }
 
-  // G major pentatonic (wind-chime-friendly): G A B D E
+  // Wind-chime-friendly tuning: G major pentatonic (G A B D E)
   const SCALE = [392.00, 440.00, 493.88, 587.33, 659.25];
 
   function playChime(f0, strength = 0.6) {
     const { ctx, input } = ensureAudio();
     const now = ctx.currentTime;
 
+    // Modal partials: more “tube/chime” than harmonic synth
     const ratios = [1.00, 2.01, 2.76, 3.90, 5.41, 8.93];
     const gains  = [1.00, 0.40, 0.32, 0.22, 0.14, 0.10];
 
@@ -268,6 +274,7 @@
     for (let i = 0; i < ratios.length; i++) {
       const baseFreq = f0 * ratios[i];
 
+      // Pair of close sines for shimmer
       for (let p = 0; p < 2; p++) {
         const o = ctx.createOscillator();
         o.type = "sine";
@@ -277,7 +284,7 @@
         g.gain.setValueAtTime(0.0001, now);
         g.gain.exponentialRampToValueAtTime(gains[i] * strength * (p === 0 ? 1 : 0.85), now + 0.008);
 
-        const tail = 2.6 - i * 0.28;
+        const tail = 2.6 - i * 0.28; // higher modes die sooner
         g.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.70, tail));
 
         o.connect(g).connect(voice);
@@ -286,6 +293,7 @@
       }
     }
 
+    // Tiny strike "clink"
     const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.04), ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) {
@@ -360,13 +368,13 @@
     while (feedEl.children.length > 60) feedEl.removeChild(feedEl.lastChild);
   }
 
-  // --- ASCII chimes (auto-fit to available width) ---
+  // --- ASCII chimes (ONLY tubes move) ---
   let chimeImpulse = 0;
   function nudgeChimes(amount = 1) { chimeImpulse = Math.min(9, chimeImpulse + amount); }
 
+  // Auto-fit columns to prevent horizontal clipping on mobile
   let cachedCols = 58;
   function measureCols(){
-    // Estimate how many monospace columns fit in the <pre>
     const probe = document.createElement("span");
     probe.style.position = "absolute";
     probe.style.visibility = "hidden";
@@ -385,9 +393,7 @@
     const cols = Math.floor(innerW / charW);
     cachedCols = Math.max(38, Math.min(58, cols));
   }
-
-  window.addEventListener("resize", () => measureCols());
-  // measure once the browser has laid things out
+  window.addEventListener("resize", measureCols);
   requestAnimationFrame(measureCols);
 
   function buildChimesFrame(tMs) {
@@ -395,9 +401,14 @@
     const height = 17;
 
     const t = tMs * 0.0016;
-    const amp = 1.0 + chimeImpulse * 0.9;
-    const sway = Math.round(Math.sin(t) * amp * 0.35);
-    const cx = Math.floor(width / 2) + sway;
+    const localT = tMs * 0.0021;
+
+    // Body is fixed
+    const cx = Math.floor(width / 2);
+
+    // Motion is mostly impulse-driven (so it feels "played", not drifting constantly)
+    const baseMove = 0.12;              // tiny idle motion
+    const amp = baseMove + chimeImpulse * 0.95;
 
     const grid = Array.from({ length: height }, () => Array(width).fill(" "));
     const set = (x, y, ch) => {
@@ -406,14 +417,14 @@
     };
     const put = (x, y, s) => { for (let i = 0; i < s.length; i++) set(x + i, y, s[i]); };
 
-    // ring + hanger
+    // Ring + hanger (fixed)
     put(cx - 2, 0, "(__)");
     set(cx, 2, "|");
     set(cx, 3, "|");
 
-    // dynamic bar length
+    // Bar (fixed)
     const barLen = Math.max(22, Math.min(30, width - 10));
-    const barStart = Math.max(0, Math.min(width - barLen, cx - Math.floor(barLen/2)));
+    const barStart = Math.max(0, Math.min(width - barLen, cx - Math.floor(barLen / 2)));
 
     const top = "+" + "-".repeat(barLen - 2) + "+";
     const mid = "|" + " ".repeat(barLen - 2) + "|";
@@ -422,7 +433,7 @@
     put(barStart, 5, mid);
     put(barStart, 6, top);
 
-    // tube count adapts to width
+    // Tube anchors (fixed)
     const tubeCount = width < 48 ? 5 : 7;
     const innerStart = barStart + 2;
     const innerEnd = barStart + barLen - 3;
@@ -431,32 +442,33 @@
     const anchors = [];
     for (let i = 0; i < tubeCount; i++) anchors.push(Math.round(innerStart + step * i));
 
-    const localT = tMs * 0.0019;
-    const clSway = Math.round(Math.sin(localT * 1.2 + 0.7) * amp * 0.18);
-    const clx = cx + clSway;
-
+    // Tubes (move)
     for (let i = 0; i < anchors.length; i++) {
-      const tubeSway = Math.round(Math.sin(localT + i * 0.55) * amp * 0.22);
-      const x = anchors[i] + tubeSway;
+      const ax = anchors[i];
 
-      set(x, 7, "|");
+      // Each tube has a slightly different rhythm/phase
+      const tubeSway = Math.round(Math.sin(localT * 1.35 + i * 0.85 + t) * amp * 0.9);
+      const x = ax + tubeSway;
+
+      // Make the motion readable: angled hint at the bar, then vertical string
+      const dx = x - ax;
+      set(ax, 7, dx > 0 ? "\\" : dx < 0 ? "/" : "|");
       set(x, 8, "|");
 
+      // Tube body
       const tubeLen = 4 + (i % 3);
       for (let k = 0; k < tubeLen; k++) put(x - 1, 9 + k, "||");
       put(x - 1, 9 + tubeLen, "[]");
     }
 
-    // clapper
-    set(clx, 7, "|");
-    set(clx, 8, "|");
-    put(clx - 1, 12, "()");
+    // A small fixed clapper marker (does NOT move; tubes do the work visually)
+    put(cx - 1, 12, "()");
 
     return grid.map(r => r.join("")).join("\n");
   }
 
   function animateChimes(tMs) {
-    chimeImpulse *= 0.92;
+    chimeImpulse *= 0.90;
     if (chimeImpulse < 0.02) chimeImpulse = 0;
     chimesEl.textContent = buildChimesFrame(tMs);
     requestAnimationFrame(animateChimes);
@@ -486,7 +498,7 @@
 
     if (recentChimes.length <= MAX_CHIMES_PER_SEC) {
       playChime(freq, strength);
-      nudgeChimes(0.7 + strength * 1.8);
+      nudgeChimes(0.8 + strength * 2.0);
     } else {
       nudgeChimes(0.25);
     }
