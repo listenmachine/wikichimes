@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Wikipedia Wind Chime</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 860px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+    label { display: grid; gap: 6px; font-size: 14px; }
+    input[type="text"], input[type="number"] { padding: 8px 10px; border: 1px solid #ccc; border-radius: 10px; min-width: 240px; }
+    input[type="range"] { width: 240px; }
+    button { padding: 10px 14px; border: 0; border-radius: 12px; cursor: pointer; }
+    button.primary { background: #111; color: #fff; }
+    button.secondary { background: #eee; }
+    .status { margin-top: 14px; padding: 12px; border: 1px solid #ddd; border-radius: 12px; }
+    .log { margin-top: 14px; padding: 12px; border: 1px solid #ddd; border-radius: 12px; height: 260px; overflow: auto; background: #fafafa; }
+    .muted { opacity: 0.7; }
+    small { color: #555; }
+    code { background: #f2f2f2; padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Wikipedia Wind Chime</h1>
+  <p class="muted">
+    Plays a bell note for each matching edit from Wikimedia EventStreams (<code>recentchange</code>). :contentReference[oaicite:1]{index=1}
+  </p>
+
+  <div class="row">
+    <label>
+      Wiki domain (filter)
+      <input id="domain" type="text" value="en.wikipedia.org" />
+      <small>Examples: <code>en.wikipedia.org</code>, <code>fr.wikipedia.org</code>. Leave blank for all.</small>
+    </label>
+
+    <label>
+      Exact page title (optional)
+      <input id="title" type="text" placeholder="e.g. Cat (leave blank for all pages)" />
+      <small>Matches <em>exact</em> title string in the event.</small>
+    </label>
+  </div>
+
+  <div class="row" style="margin-top: 10px;">
+    <label style="min-width: 240px;">
+      Volume
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="0.4" />
+    </label>
+
+    <label style="min-width: 240px;">
+      Minimum gap between chimes (ms)
+      <input id="gap" type="number" min="0" max="2000" step="10" value="80" />
+      <small>Prevents machine-gun blur on busy streams.</small>
+    </label>
+
+    <label style="display:flex; gap:10px; align-items:center; margin-bottom: 6px;">
+      <input id="mainspace" type="checkbox" checked />
+      Articles only (namespace 0)
+    </label>
+
+    <label style="display:flex; gap:10px; align-items:center; margin-bottom: 6px;">
+      <input id="hidebots" type="checkbox" checked />
+      Hide bot edits
+    </label>
+  </div>
+
+  <div class="row" style="margin-top: 12px;">
+    <button id="start" class="primary">Start</button>
+    <button id="stop" class="secondary" disabled>Stop</button>
+    <button id="test" class="secondary">Test chime</button>
+  </div>
+
+  <div class="status" id="status">
+    <div><strong>Connection:</strong> <span id="conn">stopped</span></div>
+    <div><strong>Chimes:</strong> <span id="count">0</span></div>
+    <div><strong>Last:</strong> <span id="last">—</span></div>
+  </div>
+
+  <div class="log" id="log" aria-label="Event log"></div>
+
+<script>
+(() => {
+  const STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange";
+
+  const $ = (id) => document.getElementById(id);
+  const connEl = $("conn");
+  const countEl = $("count");
+  const lastEl = $("last");
+  const logEl = $("log");
+
+  let es = null;
+  let audio = null;
+  let lastChimeAt = 0;
+  let chimeCount = 0;
+
+  // Simple stable hash (FNV-1a-ish) for mapping titles/users to notes
+  function hash32(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  function log(line) {
+    const div = document.createElement("div");
+    div.textContent = line;
+    logEl.prepend(div);
+  }
+
+  function ensureAudio() {
+    if (audio) return audio;
+
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Master chain: bell -> HPF -> light delay -> master gain -> destination
+    const master = ctx.createGain();
+    master.gain.value = parseFloat($("vol").value);
+
+    const hpf = ctx.createBiquadFilter();
+    hpf.type = "highpass";
+    hpf.frequency.value = 140;
+
+    const delay = ctx.createDelay(0.25);
+    delay.delayTime.value = 0.055;
+
+    const fb = ctx.createGain();
+    fb.gain.value = 0.18;
+    delay.connect(fb).connect(delay);
+
+    hpf.connect(delay).connect(master);
+    hpf.connect(master);
+    master.connect(ctx.destination);
+
+    audio = { ctx, master, hpf };
+    return audio;
+  }
+
+  function setVolume(v) {
+    if (!audio) return;
+    audio.master.gain.setTargetAtTime(v, audio.ctx.currentTime, 0.01);
+  }
+
+  // Bell-ish FM chime
+  function playBell(freq, strength = 0.6) {
+    const { ctx, hpf } = ensureAudio();
+
+    const now = ctx.currentTime;
+
+    const carrier = ctx.createOscillator();
+    carrier.type = "sine";
+    carrier.frequency.value = freq;
+
+    const mod = ctx.createOscillator();
+    mod.type = "sine";
+    mod.frequency.value = freq * 2.01;
+
+    const modGain = ctx.createGain();
+    // Start bright, then decay quickly
+    modGain.gain.setValueAtTime(freq * 1.8 * strength, now);
+    modGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+    // FM: mod -> modGain -> carrier.frequency
+    mod.connect(modGain);
+    modGain.connect(carrier.frequency);
+
+    const amp = ctx.createGain();
+    amp.gain.setValueAtTime(0.0001, now);
+    amp.gain.exponentialRampToValueAtTime(0.6 * strength, now + 0.01);
+    amp.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+
+    carrier.connect(amp).connect(hpf);
+
+    carrier.start(now);
+    mod.start(now);
+    carrier.stop(now + 1.6);
+    mod.stop(now + 1.6);
+  }
+
+  function chimeForEvent(ev) {
+    // Pentatonic-ish set; title hash selects note, user hash selects octave.
+    const scale = [261.63, 293.66, 329.63, 392.00, 440.00]; // C D E G A
+    const title = (ev && ev.title) ? ev.title : "unknown";
+    const user = (ev && ev.user) ? ev.user : "unknown";
+
+    const hT = hash32(title);
+    const hU = hash32(user);
+
+    const base = scale[hT % scale.length];
+    const octave = (hU % 3); // 0..2
+    const freq = base * Math.pow(2, octave);
+
+    // Slightly vary strength by change size if available
+    let strength = 0.55;
+    if (typeof ev.length === "object" && typeof ev.length.new === "number" && typeof ev.length.old === "number") {
+      const delta = Math.min(2000, Math.abs(ev.length.new - ev.length.old));
+      strength = 0.35 + (delta / 2000) * 0.55;
+    }
+
+    playBell(freq, strength);
+  }
+
+  function matchesFilters(ev) {
+    // Wikitech docs show meta.domain can be "canary" test events; ignore them. :contentReference[oaicite:2]{index=2}
+    if (ev?.meta?.domain === "canary") return false;
+
+    const domainFilter = $("domain").value.trim();
+    if (domainFilter) {
+      // EventStreams examples use server_name for wiki domain filtering. :contentReference[oaicite:3]{index=3}
+      if (ev.server_name !== domainFilter) return false;
+    }
+
+    const titleFilter = $("title").value.trim();
+    if (titleFilter) {
+      if (ev.title !== titleFilter) return false;
+    }
+
+    if ($("mainspace").checked) {
+      // RecentChange events include namespace in the RC feed schema. :contentReference[oaicite:4]{index=4}
+      if (typeof ev.namespace === "number" && ev.namespace !== 0) return false;
+    }
+
+    if ($("hidebots").checked) {
+      if (ev.bot === true) return false;
+    }
+
+    // Keep it to actual edits when possible (RecentChange stream can include logs/new pages, etc.)
+    if (typeof ev.type === "string" && ev.type !== "edit") return false;
+
+    return true;
+  }
+
+  function start() {
+    const { ctx } = ensureAudio();
+    // Required in most browsers before sound will play
+    ctx.resume();
+
+    if (es) es.close();
+
+    es = new EventSource(STREAM_URL);
+    connEl.textContent = "connecting…";
+    log(`Connecting to ${STREAM_URL}`);
+
+    es.onopen = () => {
+      connEl.textContent = "connected";
+      log("Connected.");
+    };
+
+    es.onerror = (e) => {
+      connEl.textContent = "error (will retry)";
+      log("Connection error (EventSource will retry).");
+    };
+
+    es.onmessage = (msg) => {
+      let ev;
+      try { ev = JSON.parse(msg.data); } catch { return; }
+
+      if (!matchesFilters(ev)) return;
+
+      const gapMs = Math.max(0, parseInt($("gap").value || "0", 10));
+      const nowMs = performance.now();
+      if (gapMs > 0 && (nowMs - lastChimeAt) < gapMs) return;
+      lastChimeAt = nowMs;
+
+      chimeForEvent(ev);
+
+      chimeCount++;
+      countEl.textContent = String(chimeCount);
+      lastEl.textContent = `${ev.title} — ${ev.user || "unknown"} (${ev.server_name || ev.wiki || "?"})`;
+      log(`♪ ${ev.server_name || ev.wiki || "?"} :: ${ev.title}`);
+    };
+
+    $("start").disabled = true;
+    $("stop").disabled = false;
+  }
+
+  function stop() {
+    if (es) {
+      es.close();
+      es = null;
+    }
+    connEl.textContent = "stopped";
+    log("Stopped.");
+    $("start").disabled = false;
+    $("stop").disabled = true;
+  }
+
+  $("start").addEventListener("click", start);
+  $("stop").addEventListener("click", stop);
+  $("test").addEventListener("click", () => playBell(392.00, 0.7)); // G4
+  $("vol").addEventListener("input", (e) => setVolume(parseFloat(e.target.value)));
+})();
+</script>
+</body>
+</html>
